@@ -86,6 +86,38 @@ struct DetailRow: View {
 
 // MARK: - 课程详情模态窗口
 
+/// 详情页里可暂存编辑的字段快照。
+///
+/// 用值类型承载草稿有三个好处：isModified 直接用自动合成的 ==，不必手写逐字段比较，
+/// 将来加字段也不会漏比；保存和拆分课次共用同一份写入逻辑；以及编辑态只剩一个 @State，
+/// 不存在"某几个字段忘了同步"的空间。
+struct CourseEdits: Equatable {
+    var dayOfWeek: Int
+    var timeSlot: Int
+    var duration: Int
+    var location: String
+    var teacher: String
+    var note: String
+
+    init(_ course: Course) {
+        dayOfWeek = course.dayOfWeek
+        timeSlot = course.timeSlot
+        duration = course.duration
+        location = course.location
+        teacher = course.teacher
+        note = course.note
+    }
+
+    func apply(to course: Course) {
+        course.dayOfWeek = dayOfWeek
+        course.timeSlot = timeSlot
+        course.duration = duration
+        course.location = location
+        course.teacher = teacher
+        course.note = note
+    }
+}
+
 struct CourseDetailSheet: View {
     let course: Course
     let settings: AppSettings
@@ -95,31 +127,24 @@ struct CourseDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var selectedCourseColor: Color
-    @State private var editedDayOfWeek: Int
-    @State private var editedTimeSlot: Int
-    @State private var editedDuration: Int
-    @State private var editedLocation: String
-    @State private var editedTeacher: String
-    @State private var editedNote: String
+    @State private var edits: CourseEdits
     @State private var showSaveConfirmation = false
 
+    // 这里在 init 里播种是安全的：弹窗由 sheet(item:) 呈现，课程身份变化时 SwiftUI 会给出
+    // 全新的视图，播种值必定重新生效。改回 sheet(isPresented:) 的话状态会被复用，
+    // 第二次打开就会停留在上一门课的信息上。
     init(course: Course, settings: AppSettings, helpers: ScheduleHelpers, currentViewWeek: Int) {
         self.course = course
         self.settings = settings
         self.helpers = helpers
         self.currentViewWeek = currentViewWeek
         _selectedCourseColor = State(initialValue: course.uiColor)
-        _editedDayOfWeek = State(initialValue: course.dayOfWeek)
-        _editedTimeSlot = State(initialValue: course.timeSlot)
-        _editedDuration = State(initialValue: course.duration)
-        _editedLocation = State(initialValue: course.location)
-        _editedTeacher = State(initialValue: course.teacher)
-        _editedNote = State(initialValue: course.note)
+        _edits = State(initialValue: CourseEdits(course))
     }
 
     private var timeSlotRange: String {
-        let startMinutes = settings.timeSlotToMinutes(editedTimeSlot)
-        let endMinutes = settings.timeSlotEndMinutes(editedTimeSlot + editedDuration - 1)
+        let startMinutes = settings.timeSlotToMinutes(edits.timeSlot)
+        let endMinutes = settings.timeSlotEndMinutes(edits.timeSlot + edits.duration - 1)
 
         let startHour = startMinutes / 60
         let startMin = startMinutes % 60
@@ -130,16 +155,11 @@ struct CourseDetailSheet: View {
     }
 
     private var maxDuration: Int {
-        max(1, 12 - editedTimeSlot + 1)
+        max(1, 12 - edits.timeSlot + 1)
     }
 
     private var isModified: Bool {
-        editedDayOfWeek != course.dayOfWeek
-        || editedTimeSlot != course.timeSlot
-        || editedDuration != course.duration
-        || editedLocation != course.location
-        || editedTeacher != course.teacher
-        || editedNote != course.note
+        edits != CourseEdits(course)
     }
 
     var body: some View {
@@ -169,7 +189,7 @@ struct CourseDetailSheet: View {
                     }
                 }
                 Section(header: Text(NSLocalizedString("schedule_component.class_time", comment: ""))) {
-                    Picker(NSLocalizedString("schedule_component.day_of_week", comment: ""), selection: $editedDayOfWeek) {
+                    Picker(NSLocalizedString("schedule_component.day_of_week", comment: ""), selection: $edits.dayOfWeek) {
                         Text(NSLocalizedString("weekday.monday", comment: "")).tag(1)
                         Text(NSLocalizedString("weekday.tuesday", comment: "")).tag(2)
                         Text(NSLocalizedString("weekday.wednesday", comment: "")).tag(3)
@@ -179,21 +199,21 @@ struct CourseDetailSheet: View {
                         Text(NSLocalizedString("weekday.sunday", comment: "")).tag(7)
                     }
 
-                    Picker(NSLocalizedString("schedule_component.start_slot", comment: ""), selection: $editedTimeSlot) {
+                    Picker(NSLocalizedString("schedule_component.start_slot", comment: ""), selection: $edits.timeSlot) {
                         ForEach(1...12, id: \.self) { slot in
                             Text("\(slot)").tag(slot)
                         }
                     }
-                    .onChange(of: editedTimeSlot) { _, newValue in
-                        if editedDuration > maxDuration {
-                            editedDuration = maxDuration
+                    .onChange(of: edits.timeSlot) { _, newValue in
+                        if edits.duration > maxDuration {
+                            edits.duration = maxDuration
                         }
                         if newValue < 1 {
-                            editedTimeSlot = 1
+                            edits.timeSlot = 1
                         }
                     }
 
-                    Text(String(format: NSLocalizedString("schedule_component.duration_classes", comment: ""), editedDuration))
+                    Text(String(format: NSLocalizedString("schedule_component.duration_classes", comment: ""), edits.duration))
                         .font(.body)
                         .foregroundStyle(.secondary)
 
@@ -203,7 +223,7 @@ struct CourseDetailSheet: View {
                 }
 
                 Section(header: Text(NSLocalizedString("schedule_component.location", comment: ""))) {
-                    TextField(NSLocalizedString("schedule_component.location_placeholder", comment: ""), text: $editedLocation)
+                    TextField(NSLocalizedString("schedule_component.location_placeholder", comment: ""), text: $edits.location)
                         #if os(iOS) || os(tvOS) || os(visionOS)
                         .textInputAutocapitalization(.never)
                         #endif
@@ -211,7 +231,7 @@ struct CourseDetailSheet: View {
                 }
 
                 Section(header: Text(NSLocalizedString("schedule_component.teacher", comment: ""))) {
-                    TextField(NSLocalizedString("schedule_component.teacher", comment: ""), text: $editedTeacher)
+                    TextField(NSLocalizedString("schedule_component.teacher", comment: ""), text: $edits.teacher)
                         #if os(iOS) || os(tvOS) || os(visionOS)
                         .textInputAutocapitalization(.never)
                         #endif
@@ -221,7 +241,7 @@ struct CourseDetailSheet: View {
                 Section(header: Text(NSLocalizedString("schedule_component.note", comment: ""))) {
                     TextField(
                         NSLocalizedString("schedule_component.note_placeholder", comment: ""),
-                        text: $editedNote,
+                        text: $edits.note,
                         axis: .vertical
                     )
                     .lineLimit(3...8)
@@ -318,16 +338,27 @@ struct CourseDetailSheet: View {
 
     /// - Parameter resyncCalendar: 批量修改时传 false，由调用方在最后统一同步一次。
     private func applyChangesToCourse(_ target: Course, resyncCalendar: Bool = true) {
-        target.dayOfWeek = editedDayOfWeek
-        target.timeSlot = editedTimeSlot
-        target.duration = editedDuration
-        target.location = editedLocation
-        target.teacher = editedTeacher
-        target.note = editedNote
+        edits.apply(to: target)
         try? modelContext.save()
         if resyncCalendar {
             resyncCalendarIfEnabled(scheduleId: target.scheduleId, modelContext: modelContext, settings: settings)
         }
+    }
+
+    /// 拆分课次时用编辑后的值建一条新课程。两条拆分路径共用，避免字段各写一遍而漏掉。
+    private func makeDetachedCourse(weeks: [Int]) -> Course {
+        Course(
+            name: course.name,
+            teacher: edits.teacher,
+            location: edits.location,
+            note: edits.note,
+            weeks: weeks,
+            dayOfWeek: edits.dayOfWeek,
+            timeSlot: edits.timeSlot,
+            duration: edits.duration,
+            color: course.color,
+            scheduleId: course.scheduleId
+        )
     }
 
     private func applyChangesToCurrentOccurrence() {
@@ -351,20 +382,7 @@ struct CourseDetailSheet: View {
 
         course.weeks = remainingWeeks
 
-        let detachedCourse = Course(
-            name: course.name,
-            teacher: editedTeacher,
-            location: editedLocation,
-            note: editedNote,
-            weeks: [targetWeek],
-            dayOfWeek: editedDayOfWeek,
-            timeSlot: editedTimeSlot,
-            duration: editedDuration,
-            color: course.color,
-            scheduleId: course.scheduleId
-        )
-
-        modelContext.insert(detachedCourse)
+        modelContext.insert(makeDetachedCourse(weeks: [targetWeek]))
         try? modelContext.save()
         resyncCalendarIfEnabled(scheduleId: course.scheduleId, modelContext: modelContext, settings: settings)
     }
@@ -384,20 +402,9 @@ struct CourseDetailSheet: View {
 
         course.weeks = earlierWeeks
 
-        let detachedCourse = Course(
-            name: course.name,
-            teacher: editedTeacher,
-            location: editedLocation,
-            weeks: followingWeeks,
-            dayOfWeek: editedDayOfWeek,
-            timeSlot: editedTimeSlot,
-            duration: editedDuration,
-            color: course.color,
-            scheduleId: course.scheduleId
-        )
-
-        modelContext.insert(detachedCourse)
+        modelContext.insert(makeDetachedCourse(weeks: followingWeeks))
         try? modelContext.save()
+        resyncCalendarIfEnabled(scheduleId: course.scheduleId, modelContext: modelContext, settings: settings)
     }
 
 }

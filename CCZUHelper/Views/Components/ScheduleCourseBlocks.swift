@@ -96,6 +96,17 @@ func computeOverlapColumns(for courses: [Course], settings: AppSettings) -> [Obj
     return result
 }
 
+/// 课程弹窗的呈现请求。
+///
+/// 身份直接取课程，交给 sheet(item:) 后切换课程就是切换身份，弹窗内的 @State 必定重建。
+/// 顺带把「当前查看第几周」一起带上：弹窗提到网格之外后，那个值只有课程块知道。
+struct CourseSheetRequest: Identifiable {
+    let course: Course
+    let currentViewWeek: Int
+
+    var id: PersistentIdentifier { course.persistentModelID }
+}
+
 // MARK: - 课程块
 struct CourseBlock: View {
     let course: Course
@@ -106,8 +117,11 @@ struct CourseBlock: View {
     let currentViewWeek: Int
     var overlapColumn: Int = 0
     var totalColumns: Int = 1
+    /// 课程块只负责上报意图，弹窗由上层统一呈现。
+    let onOpenDetail: () -> Void
+    let onReschedule: () -> Void
 
-    init(course: Course, dayWidth: CGFloat, hourHeight: CGFloat, settings: AppSettings, helpers: ScheduleHelpers, currentViewWeek: Int, overlapColumn: Int = 0, totalColumns: Int = 1) {
+    init(course: Course, dayWidth: CGFloat, hourHeight: CGFloat, settings: AppSettings, helpers: ScheduleHelpers, currentViewWeek: Int, overlapColumn: Int = 0, totalColumns: Int = 1, onOpenDetail: @escaping () -> Void, onReschedule: @escaping () -> Void) {
         self.course = course
         self.dayWidth = dayWidth
         self.hourHeight = hourHeight
@@ -116,6 +130,8 @@ struct CourseBlock: View {
         self.currentViewWeek = currentViewWeek
         self.overlapColumn = overlapColumn
         self.totalColumns = totalColumns
+        self.onOpenDetail = onOpenDetail
+        self.onReschedule = onReschedule
     }
 
     private var effectiveCornerRadius: CGFloat {
@@ -157,9 +173,7 @@ struct CourseBlock: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
-    @State private var showDetailSheet = false
     @Environment(\.modelContext) private var modelContext
-    @State private var showRescheduleSheet = false
     @State private var showDeleteAlert = false
 
     @ViewBuilder
@@ -208,14 +222,10 @@ struct CourseBlock: View {
             .overlay(strokeOverlay)
             .compositingGroup()
             .allowsHitTesting(true)
-            .onTapGesture {
-                showDetailSheet = true
-            }
+            .onTapGesture(perform: onOpenDetail)
             .popoverTip(ScheduleCourseDetailTip())
             .contextMenu {
-                Button {
-                    showRescheduleSheet = true
-                } label: {
+                Button(action: onReschedule) {
                     Label(NSLocalizedString("schedule_component.reschedule", comment: ""), systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button(role: .destructive) {
@@ -233,14 +243,6 @@ struct CourseBlock: View {
                 Button(NSLocalizedString("common.cancel", comment: ""), role: .cancel) {}
             } message: {
                 Text(NSLocalizedString("schedule_component.delete_confirm_message", comment: ""))
-            }
-            .sheet(isPresented: $showDetailSheet) {
-                CourseDetailSheet(course: course, settings: settings, helpers: helpers, currentViewWeek: currentViewWeek)
-                    .presentationDetents([.medium, .large])
-            }
-            .sheet(isPresented: $showRescheduleSheet) {
-                RescheduleCourseSheet(course: course, settings: settings, currentViewWeek: currentViewWeek)
-                    .presentationDetents([.medium, .large])
             }
             .offset(x: xOffset, y: yOffset)
     }

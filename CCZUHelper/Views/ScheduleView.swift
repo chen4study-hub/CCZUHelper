@@ -50,6 +50,11 @@ struct ScheduleView: View {
     @State private var showManageSchedules = false
     @State private var showImagePicker = false
     @State private var showUserSettings = false
+    /// 课程详情与调课弹窗提到这一层，全屏各只有一个呈现点。
+    /// 过去每个课程块各挂一个 sheet，一屏几十个呈现点互相干扰，而且弹窗内的 @State
+    /// 会被复用，导致第二次打开仍显示上一门课的信息。
+    @State private var courseDetailRequest: CourseSheetRequest?
+    @State private var rescheduleRequest: CourseSheetRequest?
     
     // MARK: - 常量
     private let helpers = ScheduleHelpers()
@@ -100,6 +105,23 @@ struct ScheduleView: View {
             .sheet(isPresented: $showImagePicker) { imagePickerSheet }
             #endif
             .sheet(isPresented: $showUserSettings) { userSettingsSheet }
+            .sheet(item: $courseDetailRequest) { request in
+                CourseDetailSheet(
+                    course: request.course,
+                    settings: settings,
+                    helpers: helpers,
+                    currentViewWeek: request.currentViewWeek
+                )
+                .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $rescheduleRequest) { request in
+                RescheduleCourseSheet(
+                    course: request.course,
+                    settings: settings,
+                    currentViewWeek: request.currentViewWeek
+                )
+                .presentationDetents([.medium, .large])
+            }
             .onChange(of: selectedDate) { oldValue, newValue in
                 handleSelectedDateChange(oldValue, newValue)
                 #if os(macOS)
@@ -401,7 +423,19 @@ struct ScheduleView: View {
                             helpers: helpers,
                             currentViewWeek: weekData.currentViewWeek,
                             overlapColumn: info.column,
-                            totalColumns: info.total
+                            totalColumns: info.total,
+                            onOpenDetail: {
+                                courseDetailRequest = CourseSheetRequest(
+                                    course: course,
+                                    currentViewWeek: weekData.currentViewWeek
+                                )
+                            },
+                            onReschedule: {
+                                rescheduleRequest = CourseSheetRequest(
+                                    course: course,
+                                    currentViewWeek: weekData.currentViewWeek
+                                )
+                            }
                         )
                     }
                 }
